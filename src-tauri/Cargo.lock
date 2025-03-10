@@ -1401,6 +1401,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "cryptoki",
+ "hex",
  "serde",
  "serde_json",
  "tauri",
