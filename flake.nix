@@ -72,7 +72,11 @@
           libsoup_3
           pango
           webkitgtk_4_1
+
+          libappindicator-gtk3
           openssl
+
+          pcsclite
         ];
 
       in

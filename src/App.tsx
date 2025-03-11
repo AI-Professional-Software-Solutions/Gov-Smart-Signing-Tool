@@ -1,22 +1,19 @@
-import { FirstPage } from "./components/FirstPage";
-// import invoke from tauri
-import { invoke } from "@tauri-apps/api/core";
+import { FirstPage } from './components/FirstPage';
+import SignPopup from './components/SignPopup';
+import CertPopup from './components/CertPopup';
 
 function App() {
-  const handleAction = async () => {
-    try {
-      const certificate = await invoke("get_public_certificate");
-      console.log(certificate);
+  if (window.location.href.includes('popup.html')) {
+    return <SignPopup />;
+  }
 
-    } catch (error) {
-      console.error("Error invoking get_public_certificate:", error);
-    }
-  };
+  if (window.location.href.includes('cert_pin.html')) {
+    return <CertPopup />;
+  }
 
   return (
     <>
       <FirstPage />
-      <button onClick={handleAction}>Get Public Certificate</button>
     </>
   );
 }
