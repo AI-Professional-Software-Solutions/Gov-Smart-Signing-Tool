@@ -63,7 +63,143 @@ struct CertificateState {
     current_request: Mutex<Option<CertificateRequest>>,
 }
 
+#[get("/certificate")]
+async fn get_certificate_route(
+    cert_state: web::Data<Arc<CertificateState>>,
+    app_handle: web::Data<AppHandle>,
+) -> impl Responder {
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut lock = cert_state.current_request.lock().unwrap();
+        *lock = Some(CertificateRequest { response_tx: tx });
+    }
 
+    let raw_app_handle = app_handle.get_ref();
+    let _ = tauri::WebviewWindowBuilder::new(
+        raw_app_handle,
+        "cert_popup",
+        tauri::WebviewUrl::App("cert_pin.html".into()),
+    )
+    .title("Extract Certificate")
+    .build();
+
+    match rx.await {
+        Ok(result) => match result {
+            Ok(cert) => HttpResponse::Ok().json(serde_json::json!({ "certificate": cert })),
+            Err(err_msg) => HttpResponse::BadRequest().body(err_msg),
+        },
+        Err(_) => HttpResponse::InternalServerError().body("Failed to receive certificate result"),
+    }
+}
+
+#[tauri::command]
+fn complete_certificate(
+    window: tauri::Window,
+    pin: String,
+    cert_state: tauri::State<Arc<CertificateState>>,
+) -> Result<(), String> {
+    let pending = {
+        let lock = cert_state.current_request.lock().unwrap();
+        lock.is_some()
+    };
+
+    if pending {
+        let app_handle = window.app_handle();
+        match extract_certificate_wrapper(app_handle.clone(), &pin) {
+            Ok(cert) => {
+                let req = {
+                    let mut lock = cert_state.current_request.lock().unwrap();
+                    lock.take().expect("Certificate request expected")
+                };
+                req.response_tx
+                    .send(Ok(cert))
+                    .map_err(|_| "Failed to send certificate extraction result".to_string())?;
+                window
+                    .close()
+                    .map_err(|err| format!("Failed to close window: {}", err))?;
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        Err("No certificate extraction request pending".into())
+    }
+}
+
+#[post("/sign-document")]
+async fn sign_document(
+    data: web::Data<Arc<SigningState>>,
+    req_body: web::Json<SignDocumentRequest>,
+    app_handle: web::Data<AppHandle>,
+) -> impl Responder {
+    let (tx, rx) = oneshot::channel();
+
+    let raw_app_handle = app_handle.get_ref();
+
+    {
+        let mut req_lock = data.current_request.lock().unwrap();
+        *req_lock = Some(SigningRequest {
+            cert_hash: req_body.cert_hash.clone(),
+            doc_hash: req_body.hash.clone(),
+            response_tx: tx,
+        });
+    }
+
+    let _ = tauri::WebviewWindowBuilder::new(
+        raw_app_handle,
+        "sign_popup",
+        tauri::WebviewUrl::App("popup.html".into()),
+    )
+    .title("Sign Document")
+    .build();
+
+    match rx.await {
+        Ok(result) => match result {
+            Ok(signature) => {
+                let response = serde_json::json!({ "signature": signature });
+                HttpResponse::Ok().json(response)
+            }
+            Err(err_msg) => HttpResponse::BadRequest().body(err_msg),
+        },
+        Err(_) => HttpResponse::InternalServerError().body("Failed to receive signing result"),
+    }
+}
+
+#[tauri::command]
+fn complete_signing(
+    app: AppHandle,
+    window: tauri::Window,
+    pin: String,
+    state: tauri::State<Arc<SigningState>>,
+) -> Result<(), String> {
+    let maybe_data = {
+        let req_lock = state.current_request.lock().unwrap();
+        req_lock
+            .as_ref()
+            .map(|req| (req.cert_hash.clone(), req.doc_hash.clone()))
+    };
+
+    if let Some((cert_hash, doc_hash)) = maybe_data {
+        match sign_hash(app, pin, cert_hash, doc_hash) {
+            Ok(signature) => {
+                let req = {
+                    let mut req_lock = state.current_request.lock().unwrap();
+                    req_lock.take().expect("Request should be present")
+                };
+                req.response_tx
+                    .send(Ok(signature))
+                    .map_err(|_| "Failed to send signature response".to_string())?;
+                window
+                    .close()
+                    .map_err(|_| "Failed to close window".to_string())?;
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        Err("No signing request pending".into())
+    }
+}
 
 pub fn get_pkcs_11(app: AppHandle) -> Result<Pkcs11, Box<dyn Error>> {
     let resource_directory: PathBuf = app.path().resource_dir().unwrap();

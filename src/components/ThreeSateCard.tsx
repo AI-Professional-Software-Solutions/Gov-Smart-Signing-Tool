@@ -1,4 +1,3 @@
-import React from "react";
 import { ThreeStateToggle, ThreeStateToggleProps } from "./ThreeStateToggle";
 
 interface ThreeStateCardProps<T> extends ThreeStateToggleProps<T> {}
