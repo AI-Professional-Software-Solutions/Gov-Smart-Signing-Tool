@@ -11,8 +11,14 @@ use cryptoki::object::{Attribute, AttributeType, KeyType, ObjectClass};
 use cryptoki::session::UserType;
 use cryptoki::slot::Slot;
 use cryptoki::types::AuthPin;
-use serde::Deserialize;
+use sequoia_openpgp::parse::stream::{
+    DetachedVerifierBuilder, MessageStructure, VerificationHelper,
+};
+use sequoia_openpgp::parse::Parse;
+use sequoia_openpgp::KeyHandle;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
+use std::io::Read;
 use std::path::PathBuf;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -23,10 +29,18 @@ use tauri::{AppHandle, Manager};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
+use chrono::{DateTime, Utc};
+use sequoia_openpgp::armor::{Reader, ReaderMode};
+use sequoia_openpgp::cert::Cert;
+use sequoia_openpgp::policy::StandardPolicy;
+use std::fs;
+
 #[derive(Debug)]
 struct SigningRequest {
     cert_hash: String,
     doc_hash: String,
+    timestamp: String,
+    signed_certificate: String,
     response_tx: oneshot::Sender<Result<String, String>>,
 }
 
@@ -38,7 +52,9 @@ struct SigningState {
 #[derive(Deserialize)]
 struct SignDocumentRequest {
     cert_hash: String,
-    hash: String, // document hash in hex
+    hash: String,
+    timestamp: String,
+    signed_certificate: String,
 }
 
 #[derive(Debug)]
@@ -63,6 +79,69 @@ struct CertificateState {
     current_request: Mutex<Option<CertificateRequest>>,
 }
 
+#[derive(Serialize)]
+pub struct CertificateInfo {
+    id: String,
+    label: String,
+}
+
+pub fn list_certificates(pkcs11: &Pkcs11) -> Result<Vec<CertificateInfo>, Box<dyn Error>> {
+    let mut cert_list = Vec::new();
+    let slots = pkcs11.get_slots_with_token()?;
+    for slot in slots {
+        let session = pkcs11.open_ro_session(slot)?;
+        let search_template = vec![Attribute::Class(ObjectClass::CERTIFICATE)];
+        let cert_objs = session.find_objects(&search_template)?;
+        for cert_handle in cert_objs {
+            let attrs =
+                session.get_attributes(cert_handle, &[AttributeType::Id, AttributeType::Label])?;
+            let mut id = None;
+            let mut label = None;
+            for attr in attrs {
+                match attr {
+                    Attribute::Id(val) => id = Some(val),
+                    Attribute::Label(val) => label = Some(val),
+                    _ => {}
+                }
+            }
+            if let Some(id) = id {
+                let id_hex = hex::encode(&id);
+                let label_str = label.unwrap_or_else(|| b"Unknown Certificate".to_vec());
+                cert_list.push(CertificateInfo {
+                    id: id_hex,
+                    label: String::from_utf8(label_str).unwrap(),
+                });
+            }
+        }
+    }
+    Ok(cert_list)
+}
+
+pub fn extract_certificate_by_id(
+    pkcs11: &Pkcs11,
+    slot: Slot,
+    cert_id: &[u8],
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    // Open a read-only session; we do NOT log in since no PIN is required.
+    let session = pkcs11.open_ro_session(slot)?;
+    let search_template = vec![
+        Attribute::Class(ObjectClass::CERTIFICATE),
+        Attribute::Id(cert_id.to_vec()),
+    ];
+    let cert_objs = session.find_objects(&search_template)?;
+    if cert_objs.is_empty() {
+        return Err("Certificate not found on the token".into());
+    }
+    let cert_handle = cert_objs[0];
+    let attrs = session.get_attributes(cert_handle, &[AttributeType::Value])?;
+    for attr in attrs {
+        if let Attribute::Value(cert) = attr {
+            return Ok(cert);
+        }
+    }
+    Err("Certificate object found but CKA_VALUE attribute is missing".into())
+}
+
 #[get("/certificate")]
 async fn get_certificate_route(
     cert_state: web::Data<Arc<CertificateState>>,
@@ -74,13 +153,28 @@ async fn get_certificate_route(
         *lock = Some(CertificateRequest { response_tx: tx });
     }
 
+    // Create the PKCS#11 instance and list available certificates.
+    let pkcs11 = match get_pkcs_11(app_handle.get_ref().clone()) {
+        Ok(pkcs11) => pkcs11,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+    let certs = match list_certificates(&pkcs11) {
+        Ok(certs) => certs,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    // Serialize the certificates list as JSON and URL-encode it.
+    let certs_json = serde_json::to_string(&certs).unwrap();
+    let certs_param = urlencoding::encode(&certs_json);
+    let url_with_params = format!("cert_pin.html?certs={}", certs_param);
+
     let raw_app_handle = app_handle.get_ref();
     let _ = tauri::WebviewWindowBuilder::new(
         raw_app_handle,
         "cert_popup",
-        tauri::WebviewUrl::App("cert_pin.html".into()),
+        tauri::WebviewUrl::App(url_with_params.into()),
     )
-    .title("Extract Certificate")
+    .title("Select Certificate")
     .build();
 
     match rx.await {
@@ -95,35 +189,73 @@ async fn get_certificate_route(
 #[tauri::command]
 fn complete_certificate(
     window: tauri::Window,
-    pin: String,
+    cert_id: String,
     cert_state: tauri::State<Arc<CertificateState>>,
 ) -> Result<(), String> {
-    let pending = {
-        let lock = cert_state.current_request.lock().unwrap();
-        lock.is_some()
-    };
-
-    if pending {
-        let app_handle = window.app_handle();
-        match extract_certificate_wrapper(app_handle.clone(), &pin) {
-            Ok(cert) => {
-                let req = {
-                    let mut lock = cert_state.current_request.lock().unwrap();
-                    lock.take().expect("Certificate request expected")
-                };
-                req.response_tx
-                    .send(Ok(cert))
-                    .map_err(|_| "Failed to send certificate extraction result".to_string())?;
-                window
-                    .close()
-                    .map_err(|err| format!("Failed to close window: {}", err))?;
-                Ok(())
-            }
-            Err(e) => Err(e.to_string()),
+    let app_handle = window.app_handle();
+    let pkcs11 = get_pkcs_11(app_handle.clone()).map_err(|e| e.to_string())?;
+    let slots = pkcs11.get_slots_with_token().map_err(|e| e.to_string())?;
+    // Look for the certificate matching the provided id across all slots.
+    let mut found_cert = None;
+    let cert_id_bytes = hex::decode(&cert_id).map_err(|e| e.to_string())?;
+    for slot in slots {
+        if let Ok(cert) = extract_certificate_by_id(&pkcs11, slot, &cert_id_bytes) {
+            found_cert = Some(cert);
+            break;
         }
-    } else {
-        Err("No certificate extraction request pending".into())
     }
+    let cert_bytes = found_cert.ok_or("Certificate not found".to_string())?;
+    let req = {
+        let mut lock = cert_state.current_request.lock().unwrap();
+        lock.take().expect("Certificate request expected")
+    };
+    req.response_tx
+        .send(Ok(hex::encode(cert_bytes)))
+        .map_err(|_| "Failed to send certificate extraction result".to_string())?;
+    window
+        .close()
+        .map_err(|err| format!("Failed to close window: {}", err))?;
+    Ok(())
+}
+
+fn verify_company_signature(
+    app: AppHandle,
+    message: &str,
+    signature: &str,
+) -> Result<bool, Box<dyn Error>> {
+    // make the path relative to the current file
+    let public_key_str = get_public_key_str(app)?;
+    let cert = Cert::from_bytes(public_key_str.as_bytes())
+        .map_err(|_err| "Cannot create certificate from reader")?;
+    let policy = StandardPolicy::new();
+    println!("Verifying signature: {}", signature);
+
+    let mut armored_reader =
+        Reader::from_bytes(signature.as_bytes(), Some(ReaderMode::VeryTolerant));
+    let mut signature_bytes = Vec::new();
+    armored_reader.read_to_end(&mut signature_bytes)?;
+
+    struct Helper {
+        cert: Cert,
+    }
+    impl VerificationHelper for Helper {
+        fn get_certs(&mut self, _ids: &[KeyHandle]) -> sequoia_openpgp::Result<Vec<Cert>> {
+            Ok(vec![self.cert.clone()])
+        }
+        fn check(&mut self, _structure: MessageStructure<'_>) -> sequoia_openpgp::Result<()> {
+            let _ = _structure;
+            Ok(())
+        }
+    }
+    let helper = Helper { cert };
+
+    // Build the detached verifier from the signature bytes.
+    let verifier_builder = DetachedVerifierBuilder::from_bytes(&signature_bytes)?;
+    let mut verifier = verifier_builder.with_policy(&policy, None, helper)?;
+
+    verifier.verify_bytes(message.as_bytes())?;
+
+    Ok(true)
 }
 
 #[post("/sign-document")]
@@ -134,6 +266,24 @@ async fn sign_document(
 ) -> impl Responder {
     let (tx, rx) = oneshot::channel();
 
+    let request_time = match DateTime::parse_from_rfc3339(&req_body.timestamp) {
+        Ok(t) => t.with_timezone(&Utc),
+        Err(_) => return HttpResponse::BadRequest().body("Invalid timestamp format"),
+    };
+    let now = Utc::now();
+    if (now.timestamp() - request_time.timestamp()).abs() > 300 {
+        return HttpResponse::BadRequest().body("Timestamp is out of acceptable range");
+    }
+
+    let message = format!("{}_{}", req_body.cert_hash, req_body.timestamp);
+    if let Err(e) = verify_company_signature(
+        app_handle.get_ref().clone(),
+        &message,
+        &req_body.signed_certificate,
+    ) {
+        return HttpResponse::BadRequest().body(format!("Signature verification failed: {}", e));
+    }
+
     let raw_app_handle = app_handle.get_ref();
 
     {
@@ -141,6 +291,8 @@ async fn sign_document(
         *req_lock = Some(SigningRequest {
             cert_hash: req_body.cert_hash.clone(),
             doc_hash: req_body.hash.clone(),
+            timestamp: req_body.timestamp.clone(),
+            signed_certificate: req_body.signed_certificate.clone(),
             response_tx: tx,
         });
     }
@@ -201,6 +353,21 @@ fn complete_signing(
     }
 }
 
+pub fn get_public_key_str(app: AppHandle) -> Result<String, Box<dyn Error>> {
+    let resource_directory: PathBuf = app.path().resource_dir().unwrap();
+
+    let mut pkcs11_lib_path = resource_directory.join("pcks11");
+    pkcs11_lib_path = pkcs11_lib_path.join("gov_smart.pub");
+
+    if !pkcs11_lib_path.exists() {
+        return Err("Public key file not found".into());
+    }
+
+    let public_key = std::fs::read_to_string(pkcs11_lib_path)?;
+    println!("Public key: {}", public_key);
+    Ok(public_key)
+}
+
 pub fn get_pkcs_11(app: AppHandle) -> Result<Pkcs11, Box<dyn Error>> {
     let resource_directory: PathBuf = app.path().resource_dir().unwrap();
 
@@ -220,45 +387,6 @@ pub fn get_pkcs_11(app: AppHandle) -> Result<Pkcs11, Box<dyn Error>> {
     let pkcs11 = Pkcs11::new(&pkcs11_lib_path)?;
     pkcs11.initialize(CInitializeArgs::OsThreads)?;
     Ok(pkcs11)
-}
-
-pub fn extract_certificate_wrapper(
-    app: AppHandle,
-    user_pin: &str,
-) -> Result<String, Box<dyn Error>> {
-    let pkcs11 = get_pkcs_11(app)?;
-    let slots = pkcs11.get_slots_with_token()?;
-    let slot = slots.get(0).ok_or("No token slot available")?;
-    let certificate = extract_certificate(&pkcs11, *slot, user_pin)?;
-    Ok(hex::encode(&certificate))
-}
-
-pub fn extract_certificate(
-    pkcs11: &Pkcs11,
-    slot: Slot,
-    user_pin: &str,
-) -> Result<Vec<u8>, Box<dyn Error>> {
-    let session = pkcs11.open_ro_session(slot)?;
-    session.login(UserType::User, Some(&AuthPin::new(user_pin.into())))?;
-
-    let search_template = vec![Attribute::Class(ObjectClass::CERTIFICATE)];
-    let cert_objs = session.find_objects(&search_template)?;
-
-    if cert_objs.is_empty() {
-        return Err("No certificate found on the token".into());
-    }
-
-    let cert_handle = cert_objs[0];
-
-    let attrs = session.get_attributes(cert_handle, &[AttributeType::Value])?;
-
-    for attr in attrs {
-        if let Attribute::Value(cert) = attr {
-            return Ok(cert);
-        }
-    }
-
-    Err("Certificate object found but CKA_VALUE attribute is missing".into())
 }
 
 pub fn sign_hash_wrapper(
@@ -351,14 +479,6 @@ fn sign_hash_with_cert(
 }
 
 #[tauri::command]
-fn get_certificate(app: tauri::AppHandle, user_pin: String) -> Result<String, String> {
-    match extract_certificate_wrapper(app, &user_pin) {
-        Ok(cert) => Ok(cert),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-#[tauri::command]
 fn sign_hash(
     app: tauri::AppHandle,
     user_pin: String,
@@ -385,7 +505,6 @@ pub fn run() {
         .manage(signing_state.clone())
         .manage(certificate_state.clone())
         .invoke_handler(tauri::generate_handler![
-            get_certificate,
             sign_hash,
             complete_signing,
             complete_certificate,

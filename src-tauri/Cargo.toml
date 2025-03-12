@@ -26,7 +26,10 @@ serde_json = "1"
 cryptoki = "0.9" 
 base64 = "0.22.1"   
 actix-web = "4"
+sequoia-openpgp = "2.0.0"
+chrono = "0.4.19"
 actix-cors = "0.7.1"
+urlencoding = "2.0.0"
 tokio = { version = "1", features = ["full"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
