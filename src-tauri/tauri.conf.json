@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "govsmart-signing-tool",
+  "productName": "Gov-Smart Signing Tool",
   "version": "0.1.0",
   "identifier": "com.govsmart-signing-tool.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "govsmart-signing-tool",
+        "title": "Gov-Smart Signing Tool",
         "width": 800,
         "height": 600
       }
