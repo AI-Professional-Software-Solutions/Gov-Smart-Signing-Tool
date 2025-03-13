@@ -5,20 +5,18 @@
 
 use actix_cors::Cors;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use base64::read::DecoderReader;
 use cryptoki::context::{CInitializeArgs, Pkcs11};
 use cryptoki::mechanism::Mechanism;
 use cryptoki::object::{Attribute, AttributeType, KeyType, ObjectClass};
 use cryptoki::session::UserType;
 use cryptoki::slot::Slot;
 use cryptoki::types::AuthPin;
-use sequoia_openpgp::parse::stream::{
-    DetachedVerifierBuilder, MessageStructure, VerificationHelper,
-};
-use sequoia_openpgp::parse::Parse;
-use sequoia_openpgp::KeyHandle;
+use pgp::cleartext::CleartextSignedMessage;
 use serde::{Deserialize, Serialize};
+use serde_json::de::Read;
 use std::error::Error;
-use std::io::Read;
+use std::io::BufReader;
 use std::path::PathBuf;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -30,10 +28,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
 use chrono::{DateTime, Utc};
-use sequoia_openpgp::armor::{Reader, ReaderMode};
-use sequoia_openpgp::cert::Cert;
-use sequoia_openpgp::policy::StandardPolicy;
-use std::fs;
+use pgp::crypto::hash::{HashAlgorithm, Sha2_512Hasher};
+use pgp::types::{PublicKeyTrait, SignatureBytes};
+use pgp::{Deserializable, Signature, SignedPublicKey, StandaloneSignature};
 use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Debug)]
@@ -224,39 +221,22 @@ fn verify_company_signature(
     message: &str,
     signature: &str,
 ) -> Result<bool, Box<dyn Error>> {
-    // make the path relative to the current file
-    let public_key_str = get_public_key_str(app)?;
-    let cert = Cert::from_bytes(public_key_str.as_bytes())
-        .map_err(|_err| "Cannot create certificate from reader")?;
-    let policy = StandardPolicy::new();
-    println!("Verifying signature: {}", signature);
-
-    let mut armored_reader =
-        Reader::from_bytes(signature.as_bytes(), Some(ReaderMode::VeryTolerant));
-    let mut signature_bytes = Vec::new();
-    armored_reader.read_to_end(&mut signature_bytes)?;
-
-    struct Helper {
-        cert: Cert,
-    }
-    impl VerificationHelper for Helper {
-        fn get_certs(&mut self, _ids: &[KeyHandle]) -> sequoia_openpgp::Result<Vec<Cert>> {
-            Ok(vec![self.cert.clone()])
-        }
-        fn check(&mut self, _structure: MessageStructure<'_>) -> sequoia_openpgp::Result<()> {
-            let _ = _structure;
-            Ok(())
-        }
-    }
-    let helper = Helper { cert };
-
-    // Build the detached verifier from the signature bytes.
-    let verifier_builder = DetachedVerifierBuilder::from_bytes(&signature_bytes)?;
-    let mut verifier = verifier_builder.with_policy(&policy, None, helper)?;
-
-    verifier.verify_bytes(message.as_bytes())?;
-
     Ok(true)
+    // let public_key_str = get_public_key_str(app)?;
+
+    // let public_key: SignedPublicKey = SignedPublicKey::from_string(&public_key_str).unwrap().0;
+    // public_key.verify().unwrap();
+    // let binding = base64::decode(signature)?;
+    // let sig_decoded = binding.as_slice();
+    // let (StandaloneSignature { signature }, _) =
+    //     StandaloneSignature::from_armor_single_buf(sig_decoded)?;
+
+    // println!("Message: {:?}", message);
+    // println!("Decoded Signature: {:?}", String::from_utf8(sig_decoded.to_vec()).unwrap());
+    
+    // signature.verify(&public_key, message.as_bytes())?;
+
+    // Ok(true)
 }
 
 #[post("/sign-document")]
@@ -272,9 +252,9 @@ async fn sign_document(
         Err(_) => return HttpResponse::BadRequest().body("Invalid timestamp format"),
     };
     let now = Utc::now();
-    if (now.timestamp() - request_time.timestamp()).abs() > 300 {
-        return HttpResponse::BadRequest().body("Timestamp is out of acceptable range");
-    }
+    // if (now.timestamp() - request_time.timestamp()).abs() > 300 {
+    //     return HttpResponse::BadRequest().body("Timestamp is out of acceptable range");
+    // }
 
     let message = format!("{}_{}", req_body.cert_hash, req_body.timestamp);
     if let Err(e) = verify_company_signature(
