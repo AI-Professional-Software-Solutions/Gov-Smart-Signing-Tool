@@ -22,7 +22,6 @@
     }
   },
   "bundle": {
-    "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
     "resources": ["pcks11/*"],
