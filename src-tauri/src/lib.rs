@@ -34,6 +34,7 @@ use sequoia_openpgp::armor::{Reader, ReaderMode};
 use sequoia_openpgp::cert::Cert;
 use sequoia_openpgp::policy::StandardPolicy;
 use std::fs;
+use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Debug)]
 struct SigningRequest {
@@ -492,6 +493,29 @@ fn sign_hash(
     }
 }
 
+async fn update(app: tauri::AppHandle) -> tauri_plugin_updater::Result<()> {
+    if let Some(update) = app.updater()?.check().await? {
+        let mut downloaded = 0;
+
+        update
+            .download_and_install(
+                |chunk_length, content_length| {
+                    downloaded += chunk_length;
+                    println!("downloaded {downloaded} from {content_length:?}");
+                },
+                || {
+                    println!("download finished");
+                },
+            )
+            .await?;
+
+        println!("update installed");
+        app.restart();
+    }
+
+    Ok(())
+}
+
 pub fn run() {
     let signing_state = Arc::new(SigningState {
         current_request: Mutex::new(None),
@@ -502,6 +526,7 @@ pub fn run() {
     });
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(signing_state.clone())
         .manage(certificate_state.clone())
         .invoke_handler(tauri::generate_handler![
@@ -529,6 +554,11 @@ pub fn run() {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&quit, &show])?;
 
+            let handle_clone = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                update(handle_clone).await.unwrap();
+            });
+
             let _ = TrayIconBuilder::new()
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
@@ -549,7 +579,12 @@ pub fn run() {
 
             tauri::async_runtime::spawn(async move {
                 HttpServer::new(move || {
-                    let cors = Cors::permissive();
+                    let cors = Cors::default()
+                        .allowed_origin_fn(|origin, _req_head| {
+                            origin.as_bytes().ends_with(b".gov-smart.com")
+                        })
+                        .allowed_origin("http://localhost:3000")
+                        .allowed_origin("https://gov-smart.com");
                     App::new()
                         .app_data(web::Data::new(signing_state_data.clone()))
                         .app_data(web::Data::new(certificate_state_data.clone()))

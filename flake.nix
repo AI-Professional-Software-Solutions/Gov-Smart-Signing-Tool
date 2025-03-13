@@ -96,7 +96,6 @@
           nativeBuildInputs = nativeBuildPackages;
 
           shellHook = with pkgs; ''
-            # exec /run/current-system/sw/bin/zsh
             export LD_LIBRARY_PATH="${lib.makeLibraryPath libraries}:$LD_LIBRARY_PATH"
 
             export OPENSSL_INCLUDE_DIR="${openssl.dev}/include/openssl"

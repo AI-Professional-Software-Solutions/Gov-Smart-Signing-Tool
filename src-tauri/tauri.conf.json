@@ -25,9 +25,7 @@
     "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
-    "resources": [
-      "pcks11/*"
-    ],
+    "resources": ["pcks11/*"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,5 +33,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJFNjM1NkMyODE4MkU2MzgKUldRNDVvS0J3bFpqTG1mZktDRks3THVFZnNRUzc2RzVyenQraEhwNWR1SjFhQ29WMElKYVQ4cUcK",
+      "endpoints": [
+        "https://github.com/AI-Professional-Software-Solutions/Gov-Smart-Signing-Tool/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

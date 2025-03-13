@@ -21,7 +21,7 @@ importers:
         specifier: ^2
         version: 2.2.6
       '@tauri-apps/plugin-updater':
-        specifier: ~2
+        specifier: ~2.5.1
         version: 2.5.1
       comlink:
         specifier: ^4.4.1
