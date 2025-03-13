@@ -36,7 +36,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJFNjM1NkMyODE4MkU2MzgKUldRNDVvS0J3bFpqTG1mZktDRks3THVFZnNRUzc2RzVyenQraEhwNWR1SjFhQ29WMElKYVQ4cUcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc5MDk3MkZGMzlEM0RFRjEKUldUeDN0TTUvM0lKZVFXY0ZVQ0I3YzVPanJlYm02d1Q0ZHp2aE9DVnF6QjRYd2JLYlFNazFkZnIK",
       "endpoints": [
         "https://github.com/AI-Professional-Software-Solutions/Gov-Smart-Signing-Tool/releases/latest/download/latest.json"
       ]
