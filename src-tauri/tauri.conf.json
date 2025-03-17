@@ -13,19 +13,28 @@
     "windows": [
       {
         "title": "Gov-Smart Signing Tool",
-        "width": 800,
-        "height": 600
+        "width": 1366,
+        "height": 966,
+        "minHeight": 966,
+        "minWidth": 1366
       }
     ],
     "security": {
       "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/tray/32x32.png",
+      "title": "Gov-Smart Signing Tool",
+      "tooltip": "Gov-Smart Signing Tool"
     }
   },
   "bundle": {
     "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
-    "resources": ["pcks11/*"],
+    "resources": [
+      "pcks11/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
