@@ -33,9 +33,19 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Get version from package.json
-        id: get_version
+      - name: Get version from package.json (Bash)
+        if: runner.os != 'Windows'
+        id: get_version_bash
+        shell: bash
         run: echo "VERSION=$(node -p \"require('./package.json').version\")" >> $GITHUB_ENV
+
+      - name: Get version from package.json (PowerShell)
+        if: runner.os == 'Windows'
+        id: get_version_ps
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          Add-Content -Path $env:GITHUB_ENV -Value "VERSION=$version"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
