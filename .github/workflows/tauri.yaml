@@ -13,11 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - platform: 'macos-latest' # for Arm based macs (M1 and above).
-          #   args: '--target aarch64-apple-darwin'
-          # - platform: 'macos-latest' # for Intel based macs.
-          #   args: '--target x86_64-apple-darwin'
-          - platform: 'ubuntu-22.04' # for Tauri v1 you could replace this with ubuntu-20.04.
+          - platform: 'ubuntu-22.04'
             args: ''
           - platform: 'windows-latest'
             args: ''
@@ -37,18 +33,22 @@ jobs:
         with:
           node-version: '20'
 
-      - name: install Rust stable
+      - name: Get version from package.json
+        id: get_version
+        run: echo "VERSION=$(node -p \"require('./package.json').version\")" >> $GITHUB_ENV
+
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: install dependencies (ubuntu only)
+      - name: Install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: install frontend dependencies
+      - name: Install frontend dependencies
         run: pnpm install
 
       - uses: tauri-apps/tauri-action@v0
@@ -57,8 +57,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURIY_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURIY_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: app-v__VERSION__ 
-          releaseName: 'Gov-Smart Signing TOol v__VERSION__'
+          tagName: latest
+          releaseName: "Gov-Smart Signing Tool v${{ env.VERSION }}"
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
