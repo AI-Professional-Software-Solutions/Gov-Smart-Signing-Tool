@@ -5,18 +5,14 @@
 
 use actix_cors::Cors;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
-use base64::read::DecoderReader;
 use cryptoki::context::{CInitializeArgs, Pkcs11};
 use cryptoki::mechanism::Mechanism;
 use cryptoki::object::{Attribute, AttributeType, KeyType, ObjectClass};
 use cryptoki::session::UserType;
 use cryptoki::slot::Slot;
 use cryptoki::types::AuthPin;
-use pgp::cleartext::CleartextSignedMessage;
 use serde::{Deserialize, Serialize};
-use serde_json::de::Read;
 use std::error::Error;
-use std::io::BufReader;
 use std::path::PathBuf;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -177,7 +173,16 @@ async fn get_certificate_route(
 
     match rx.await {
         Ok(result) => match result {
-            Ok(cert) => HttpResponse::Ok().json(serde_json::json!({ "certificate": cert })),
+            Ok(cert_str) => {
+                let cert: serde_json::Value =
+                    serde_json::from_str(&cert_str).unwrap_or_else(|_| {
+                        serde_json::json!( {
+                            "derHex": cert_str,
+                            "name": "Unknown Certificate"
+                        })
+                    });
+                HttpResponse::Ok().json(serde_json::json!({ "certificate": cert }))
+            }
             Err(err_msg) => HttpResponse::BadRequest().body(err_msg),
         },
         Err(_) => HttpResponse::InternalServerError().body("Failed to receive certificate result"),
@@ -193,22 +198,36 @@ fn complete_certificate(
     let app_handle = window.app_handle();
     let pkcs11 = get_pkcs_11(app_handle.clone()).map_err(|e| e.to_string())?;
     let slots = pkcs11.get_slots_with_token().map_err(|e| e.to_string())?;
-    // Look for the certificate matching the provided id across all slots.
-    let mut found_cert = None;
     let cert_id_bytes = hex::decode(&cert_id).map_err(|e| e.to_string())?;
+
+    let mut found_cert = None;
+    let mut found_label = None;
     for slot in slots {
         if let Ok(cert) = extract_certificate_by_id(&pkcs11, slot, &cert_id_bytes) {
             found_cert = Some(cert);
+            if let Ok(cert_list) = list_certificates(&pkcs11) {
+                if let Some(cert_info) = cert_list.into_iter().find(|ci| ci.id == cert_id) {
+                    found_label = Some(cert_info.label);
+                }
+            }
             break;
         }
     }
+
     let cert_bytes = found_cert.ok_or("Certificate not found".to_string())?;
+    let label = found_label.unwrap_or_else(|| "Unknown Certificate".into());
+
+    let cert_object = serde_json::json!({
+         "derHex": hex::encode(cert_bytes),
+         "name": label
+    });
+
     let req = {
         let mut lock = cert_state.current_request.lock().unwrap();
         lock.take().expect("Certificate request expected")
     };
     req.response_tx
-        .send(Ok(hex::encode(cert_bytes)))
+        .send(Ok(serde_json::to_string(&cert_object).unwrap()))
         .map_err(|_| "Failed to send certificate extraction result".to_string())?;
     window
         .close()
@@ -223,19 +242,15 @@ fn verify_company_signature(
 ) -> Result<bool, Box<dyn Error>> {
     Ok(true)
     // let public_key_str = get_public_key_str(app)?;
-
     // let public_key: SignedPublicKey = SignedPublicKey::from_string(&public_key_str).unwrap().0;
     // public_key.verify().unwrap();
     // let binding = base64::decode(signature)?;
     // let sig_decoded = binding.as_slice();
     // let (StandaloneSignature { signature }, _) =
     //     StandaloneSignature::from_armor_single_buf(sig_decoded)?;
-
     // println!("Message: {:?}", message);
     // println!("Decoded Signature: {:?}", String::from_utf8(sig_decoded.to_vec()).unwrap());
-    
     // signature.verify(&public_key, message.as_bytes())?;
-
     // Ok(true)
 }
 
@@ -299,38 +314,16 @@ async fn sign_document(
 }
 
 #[tauri::command]
-fn complete_signing(
-    app: AppHandle,
-    window: tauri::Window,
-    pin: String,
-    state: tauri::State<Arc<SigningState>>,
-) -> Result<(), String> {
-    let maybe_data = {
-        let req_lock = state.current_request.lock().unwrap();
-        req_lock
-            .as_ref()
-            .map(|req| (req.cert_hash.clone(), req.doc_hash.clone()))
-    };
-
-    if let Some((cert_hash, doc_hash)) = maybe_data {
-        match sign_hash(app, pin, cert_hash, doc_hash) {
-            Ok(signature) => {
-                let req = {
-                    let mut req_lock = state.current_request.lock().unwrap();
-                    req_lock.take().expect("Request should be present")
-                };
-                req.response_tx
-                    .send(Ok(signature))
-                    .map_err(|_| "Failed to send signature response".to_string())?;
-                window
-                    .close()
-                    .map_err(|_| "Failed to close window".to_string())?;
-                Ok(())
-            }
-            Err(e) => Err(e.to_string()),
-        }
-    } else {
-        Err("No signing request pending".into())
+fn sign_hash(
+    app: tauri::AppHandle,
+    user_pin: String,
+    cert_hash: String,
+    hash: String,
+) -> Result<String, String> {
+    let hash_bytes = hash.as_bytes();
+    match sign_hash_wrapper(app, &user_pin, cert_hash, &hash_bytes) {
+        Ok(signature) => Ok(signature),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -460,16 +453,38 @@ fn sign_hash_with_cert(
 }
 
 #[tauri::command]
-fn sign_hash(
-    app: tauri::AppHandle,
-    user_pin: String,
-    cert_hash: String,
-    hash: String,
-) -> Result<String, String> {
-    let hash_bytes = hash.as_bytes();
-    match sign_hash_wrapper(app, &user_pin, cert_hash, &hash_bytes) {
-        Ok(signature) => Ok(signature),
-        Err(e) => Err(e.to_string()),
+fn complete_signing(
+    app: AppHandle,
+    window: tauri::Window,
+    pin: String,
+    state: tauri::State<Arc<SigningState>>,
+) -> Result<(), String> {
+    let maybe_data = {
+        let req_lock = state.current_request.lock().unwrap();
+        req_lock
+            .as_ref()
+            .map(|req| (req.cert_hash.clone(), req.doc_hash.clone()))
+    };
+
+    if let Some((cert_hash, doc_hash)) = maybe_data {
+        match sign_hash(app, pin, cert_hash, doc_hash) {
+            Ok(signature) => {
+                let req = {
+                    let mut req_lock = state.current_request.lock().unwrap();
+                    req_lock.take().expect("Request should be present")
+                };
+                req.response_tx
+                    .send(Ok(signature))
+                    .map_err(|_| "Failed to send signature response".to_string())?;
+                window
+                    .close()
+                    .map_err(|_| "Failed to close window".to_string())?;
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        Err("No signing request pending".into())
     }
 }
 
@@ -506,6 +521,10 @@ pub fn run() {
     });
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(signing_state.clone())
         .manage(certificate_state.clone())
