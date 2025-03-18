@@ -66,8 +66,8 @@ jobs:
         env:
           NO_STRIP: true
           GITHUB_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURIY_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURIY_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURIY_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURIY_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: latest
           releaseName: 'Gov-Smart Signing Tool v${{ env.VERSION }}'
