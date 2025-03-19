@@ -21,11 +21,6 @@
     ],
     "security": {
       "csp": null
-    },
-    "trayIcon": {
-      "iconPath": "icons/tray/32x32.png",
-      "title": "Gov-Smart Signing Tool",
-      "tooltip": "Gov-Smart Signing Tool"
     }
   },
   "bundle": {
@@ -33,7 +28,9 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "pcks11/*"
+      "pcks11/*",
+      "icons/tray/32x32.png",
+      "icons/tray/32x32.ico"
     ],
     "icon": [
       "icons/32x32.png",

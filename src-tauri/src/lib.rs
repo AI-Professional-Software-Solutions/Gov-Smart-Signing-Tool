@@ -23,10 +23,6 @@ use tauri::{AppHandle, Manager};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
-use chrono::{DateTime, Utc};
-use pgp::crypto::hash::{HashAlgorithm, Sha2_512Hasher};
-use pgp::types::{PublicKeyTrait, SignatureBytes};
-use pgp::{Deserializable, Signature, SignedPublicKey, StandaloneSignature};
 use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Debug)]
@@ -236,9 +232,9 @@ fn complete_certificate(
 }
 
 fn verify_company_signature(
-    app: AppHandle,
-    message: &str,
-    signature: &str,
+    _app: AppHandle,
+    _message: &str,
+    _signature: &str,
 ) -> Result<bool, Box<dyn Error>> {
     Ok(true)
     // let public_key_str = get_public_key_str(app)?;
@@ -261,15 +257,6 @@ async fn sign_document(
     app_handle: web::Data<AppHandle>,
 ) -> impl Responder {
     let (tx, rx) = oneshot::channel();
-
-    let request_time = match DateTime::parse_from_rfc3339(&req_body.timestamp) {
-        Ok(t) => t.with_timezone(&Utc),
-        Err(_) => return HttpResponse::BadRequest().body("Invalid timestamp format"),
-    };
-    let now = Utc::now();
-    // if (now.timestamp() - request_time.timestamp()).abs() > 300 {
-    //     return HttpResponse::BadRequest().body("Timestamp is out of acceptable range");
-    // }
 
     let message = format!("{}_{}", req_body.cert_hash, req_body.timestamp);
     if let Err(e) = verify_company_signature(
@@ -558,7 +545,27 @@ pub fn run() {
                 update(handle_clone).await.unwrap();
             });
 
+            let _icon_image = if cfg!(target_os = "windows") {
+                let icon_path = app
+                    .path()
+                    .resource_dir()
+                    .unwrap()
+                    .join("icons/tray/32x32.ico");
+                let icon_data = std::fs::read(icon_path).expect("Failed to read icon file");
+                tauri::image::Image::new_owned(icon_data, 32, 32)
+            } else {
+                let icon_path = app
+                    .path()
+                    .resource_dir()
+                    .unwrap()
+                    .join("icons/tray/32x32.png");
+                let icon_data = std::fs::read(icon_path).expect("Failed to read icon file");
+                tauri::image::Image::new_owned(icon_data, 32, 32)
+            };
+
             let _ = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .icon_as_template(false)
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
