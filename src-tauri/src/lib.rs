@@ -185,6 +185,25 @@ async fn get_certificate_route(
     }
 }
 
+#[get("/list-certificates")]
+async fn list_certificates_route(
+    app_handle: web::Data<AppHandle>,
+) -> impl Responder {
+    // Create the PKCS#11 instance and list available certificates.
+    let pkcs11 = match get_pkcs_11(app_handle.get_ref().clone()) {
+        Ok(pkcs11) => pkcs11,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+    
+    let certs = match list_certificates(&pkcs11) {
+        Ok(certs) => certs,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    // Return the certificates directly to the frontend
+    HttpResponse::Ok().json(serde_json::json!({ "certificates": certs }))
+}
+
 #[tauri::command]
 fn complete_certificate(
     window: tauri::Window,
@@ -250,14 +269,20 @@ fn verify_company_signature(
     // Ok(true)
 }
 
+#[derive(Deserialize)]
+struct SignDocumentWithPinRequest {
+    cert_hash: String,
+    hash: String,
+    timestamp: String,
+    signed_certificate: String,
+    pin: String,
+}
+
 #[post("/sign-document")]
 async fn sign_document(
-    data: web::Data<Arc<SigningState>>,
-    req_body: web::Json<SignDocumentRequest>,
+    req_body: web::Json<SignDocumentWithPinRequest>,
     app_handle: web::Data<AppHandle>,
 ) -> impl Responder {
-    let (tx, rx) = oneshot::channel();
-
     let message = format!("{}_{}", req_body.cert_hash, req_body.timestamp);
     if let Err(e) = verify_company_signature(
         app_handle.get_ref().clone(),
@@ -267,36 +292,17 @@ async fn sign_document(
         return HttpResponse::BadRequest().body(format!("Signature verification failed: {}", e));
     }
 
-    let raw_app_handle = app_handle.get_ref();
-
-    {
-        let mut req_lock = data.current_request.lock().unwrap();
-        *req_lock = Some(SigningRequest {
-            cert_hash: req_body.cert_hash.clone(),
-            doc_hash: req_body.hash.clone(),
-            timestamp: req_body.timestamp.clone(),
-            signed_certificate: req_body.signed_certificate.clone(),
-            response_tx: tx,
-        });
-    }
-
-    let _ = tauri::WebviewWindowBuilder::new(
-        raw_app_handle,
-        "sign_popup",
-        tauri::WebviewUrl::App("popup.html".into()),
-    )
-    .title("Sign Document")
-    .build();
-
-    match rx.await {
-        Ok(result) => match result {
-            Ok(signature) => {
-                let response = serde_json::json!({ "signature": signature });
-                HttpResponse::Ok().json(response)
-            }
-            Err(err_msg) => HttpResponse::BadRequest().body(err_msg),
-        },
-        Err(_) => HttpResponse::InternalServerError().body("Failed to receive signing result"),
+    match sign_hash_wrapper(
+        app_handle.get_ref().clone(),
+        &req_body.pin,
+        req_body.cert_hash.clone(),
+        req_body.hash.as_bytes(),
+    ) {
+        Ok(signature) => {
+            let response = serde_json::json!({ "signature": signature });
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => HttpResponse::BadRequest().body(format!("Signing failed: {}", e)),
     }
 }
 
@@ -597,6 +603,7 @@ pub fn run() {
                         .app_data(app_handle_data.clone())
                         .service(sign_document)
                         .service(get_certificate_route)
+                        .service(list_certificates_route)
                         .wrap(cors)
                 })
                 .bind("127.0.0.1:8811")
