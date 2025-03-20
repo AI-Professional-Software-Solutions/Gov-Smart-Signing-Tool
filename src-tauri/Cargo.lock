@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "govsmart-signing-tool"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "actix-cors",
  "actix-web",
