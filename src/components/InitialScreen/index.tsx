@@ -25,7 +25,7 @@ type SignatureType = 'token-signature' | 'decentralised-signature'
 export const InitialScreen: React.FC = () => {
   const currentLanguage = useCurrentLanguage()
 
-  const [primaryColor, setPrimaryColor] = useState('107 114 128')
+  const primaryColor = '107 114 128'
   const [selectedComponent, setSelectedComponent] = useState<SignatureType | null>(null)
   const [hoveredComponent, setHoveredComponent] = useState<SignatureType | null>(null)
 
