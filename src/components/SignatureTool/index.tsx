@@ -330,12 +330,7 @@ const SignatureTool: React.FC = () => {
         }
 
         const md = forge.md.sha256.create();
-        const oldDigest = md.digest;
-        md.digest = () => {
-          const oldReturn = oldDigest.call(md);
-          oldReturn.data = forge.util.hexToBytes(hash);
-          return oldReturn;
-        };
+        md.update(hash, "utf8");
 
         const signature = privateKey.sign(md);
         const signatureBase64 = forge.util.encode64(signature);
