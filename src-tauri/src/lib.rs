@@ -280,9 +280,12 @@ struct SignDocumentWithPinRequest {
 
 #[post("/sign-document")]
 async fn sign_document(
-    req_body: web::Json<SignDocumentWithPinRequest>,
+    data: web::Data<Arc<SigningState>>,
+    req_body: web::Json<SignDocumentRequest>,
     app_handle: web::Data<AppHandle>,
 ) -> impl Responder {
+    let (tx, rx) = oneshot::channel();
+
     let message = format!("{}_{}", req_body.cert_hash, req_body.timestamp);
     if let Err(e) = verify_company_signature(
         app_handle.get_ref().clone(),
@@ -292,17 +295,36 @@ async fn sign_document(
         return HttpResponse::BadRequest().body(format!("Signature verification failed: {}", e));
     }
 
-    match sign_hash_wrapper(
-        app_handle.get_ref().clone(),
-        &req_body.pin,
-        req_body.cert_hash.clone(),
-        req_body.hash.as_bytes(),
-    ) {
-        Ok(signature) => {
-            let response = serde_json::json!({ "signature": signature });
-            HttpResponse::Ok().json(response)
-        }
-        Err(e) => HttpResponse::BadRequest().body(format!("Signing failed: {}", e)),
+    let raw_app_handle = app_handle.get_ref();
+
+    {
+        let mut req_lock = data.current_request.lock().unwrap();
+        *req_lock = Some(SigningRequest {
+            cert_hash: req_body.cert_hash.clone(),
+            doc_hash: req_body.hash.clone(),
+            timestamp: req_body.timestamp.clone(),
+            signed_certificate: req_body.signed_certificate.clone(),
+            response_tx: tx,
+        });
+    }
+
+    let _ = tauri::WebviewWindowBuilder::new(
+        raw_app_handle,
+        "sign_popup",
+        tauri::WebviewUrl::App("popup.html".into()),
+    )
+    .title("Sign Document")
+    .build();
+
+    match rx.await {
+        Ok(result) => match result {
+            Ok(signature) => {
+                let response = serde_json::json!({ "signature": signature });
+                HttpResponse::Ok().json(response)
+            }
+            Err(err_msg) => HttpResponse::BadRequest().body(err_msg),
+        },
+        Err(_) => HttpResponse::InternalServerError().body("Failed to receive signing result"),
     }
 }
 
