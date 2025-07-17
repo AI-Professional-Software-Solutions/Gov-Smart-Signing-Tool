@@ -591,15 +591,7 @@ pub fn run() {
 
             tauri::async_runtime::spawn(async move {
                 HttpServer::new(move || {
-                    let cors = Cors::default()
-                        .allowed_origin_fn(|origin, _req_head| {
-                            origin.as_bytes().ends_with(b".gov-smart.com")
-                        })
-                        .allowed_origin("https://staging.gov-smart.com")
-                        .allowed_origin("https://demo.gov-smart.com")
-                        .allow_any_method()
-                        .allowed_origin("http://localhost:3000")
-                        .allowed_origin("https://gov-smart.com");
+                    let cors = Cors::permissive();
                     App::new()
                         .app_data(web::Data::new(signing_state_data.clone()))
                         .app_data(web::Data::new(certificate_state_data.clone()))
