@@ -595,6 +595,9 @@ pub fn run() {
                         .allowed_origin_fn(|origin, _req_head| {
                             origin.as_bytes().ends_with(b".gov-smart.com")
                         })
+                        .allowed_origin("https://staging.gov-smart.com")
+                        .allowed_origin("https://demo.gov-smart.com")
+                        .allow_any_method()
                         .allowed_origin("http://localhost:3000")
                         .allowed_origin("https://gov-smart.com");
                     App::new()
