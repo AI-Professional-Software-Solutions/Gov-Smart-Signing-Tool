@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { FormInput } from '../../FormInput'
 import useCurrentLanguage from '../../../hooks/useCurrentLanguage'
 
@@ -31,64 +31,65 @@ const translationsObject = {
   },
 } as const
 
-interface BranchStepProps {
-  password: string
-  setPassword: (password: string) => void
-  passwordError?: string
-}
+type Lang = keyof typeof translationsObject
 
-// Password validation function
-const validatePassword = (password: string) => {
-  const errors = []
-
-  if (password.length < 8) {
-    return 'Password must be at least 8 characters long'
-  }
-
-  if (!/[A-Z]/.test(password)) {
-    return 'Password must contain at least one uppercase letter'
-  }
-
-  if (!/[0-9]/.test(password)) {
-    return 'Password must contain at least one number'
-  }
-
-  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
-    return 'Password must contain at least one special character'
-  }
-
+export const validatePassword = (password: string, lang: Lang): string | null => {
+  const t = translationsObject[lang]
+  if (password.length < 8) return t.minLength
+  if (!/[A-Z]/.test(password)) return t.uppercase
+  if (!/[0-9]/.test(password)) return t.number
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) return t.specialChar
   return null
 }
 
-// Password requirement checker
-const getPasswordRequirements = (password: string) => {
-  return {
-    minLength: password.length >= 8,
-    hasUppercase: /[A-Z]/.test(password),
-    hasNumber: /[0-9]/.test(password),
-    hasSpecialChar: /[!@#$%^&*(),.?":{}|<>]/.test(password),
-  }
+export const getPasswordRequirements = (password: string) => ({
+  minLength: password.length >= 8,
+  uppercase: /[A-Z]/.test(password),
+  number: /[0-9]/.test(password),
+  specialChar: /[!@#$%^&*(),.?":{}|<>]/.test(password),
+})
+
+interface PasswordStepProps {
+  password: string
+  setPassword: (p: string) => void
+  passwordError?: string | null
 }
 
-const PasswordStep: React.FC<BranchStepProps> = ({ password, setPassword, passwordError }) => {
-  const currentLanguage = useCurrentLanguage()
+const PasswordStep: React.FC<PasswordStepProps> = ({ password, setPassword, passwordError: parentError }) => {
+  const lang = useCurrentLanguage() as Lang
+  const [localError, setLocalError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLocalError(validatePassword(password, lang))
+  }, [password, lang])
+
+  const errorToShow = parentError ?? localError
+
+  const req = useMemo(() => getPasswordRequirements(password), [password])
+
+  const t = translationsObject[lang]
 
   return (
     <div>
-      <div
-        className={`mb-4 transition-all duration-300 ease-in-out xl:max-h-screen opacity-100 overflow-hidden`}
-        id="passwordContainer"
-      >
+      <div className="mb-4 transition-all duration-300 ease-in-out">
         <FormInput
-          label={translationsObject[currentLanguage].passwordLabel}
+          label={t.passwordLabel}
           id="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          error={passwordError}
+          error={errorToShow ?? undefined}
           type="password"
-          placeholder={translationsObject[currentLanguage].passwordPlaceholder}
+          placeholder={t.passwordPlaceholder}
         />
       </div>
+
+      <p className="font-medium mb-2">{t.passwordRequirements}</p>
+      <ul className="space-y-1 text-sm">
+        <li className={req.minLength ? 'text-green-600' : 'text-gray-500'}>{t.minLength}</li>
+        <li className={req.uppercase ? 'text-green-600' : 'text-gray-500'}>{t.uppercase}</li>
+        <li className={req.number ? 'text-green-600' : 'text-gray-500'}>{t.number}</li>
+        <li className={req.specialChar ? 'text-green-600' : 'text-gray-500'}>{t.specialChar}</li>
+      </ul>
     </div>
   )
 }
