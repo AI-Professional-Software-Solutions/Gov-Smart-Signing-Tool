@@ -1,20 +1,21 @@
-import { Icon } from "@iconify/react/dist/iconify.js";
-import React, { useState } from "react";
+import { Icon } from '@iconify/react/dist/iconify.js'
+import React, { useState } from 'react'
 
 interface FormInputProps {
-  label?: string;
-  id: string;
-  value: string;
-  onChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
-  error?: string;
-  type: "text" | "password" | "textarea" | "file";
-  readOnly?: boolean;
-  download?: boolean;
-  copyToClipboard?: boolean;
-  onDownload?: (content: string) => void;
-  minRows?: number;
-  maxRows?: number;
-  placeholder?: string;
+  label?: string
+  id: string
+  value: string
+  onChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void
+  error?: string
+  type: 'text' | 'password' | 'textarea' | 'file'
+  readOnly?: boolean
+  download?: boolean
+  copyToClipboard?: boolean
+  onDownload?: (content: string) => void
+  onCopyToClipboard?: () => void
+  minRows?: number
+  maxRows?: number
+  placeholder?: string
 }
 
 export const FormInput: React.FC<FormInputProps> = ({
@@ -23,34 +24,37 @@ export const FormInput: React.FC<FormInputProps> = ({
   value,
   onChange,
   error,
-  type = "text",
+  type = 'text',
   readOnly = false,
   download = false,
   copyToClipboard = false,
   onDownload,
+  onCopyToClipboard,
   minRows = 4,
   maxRows = 10,
   placeholder,
 }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false)
 
   const handleCopyToClipboard = () => {
     navigator.clipboard.writeText(value).then(
       () => {
-        setShowTooltip(true);
+        setShowTooltip(true)
         setTimeout(() => {
-          setShowTooltip(false);
-        }, 1200);
+          setShowTooltip(false)
+        }, 1200)
+        // Call the custom callback if provided
+        onCopyToClipboard?.()
       },
       () => {
-        alert("Failed to copy to clipboard");
-      },
-    );
-  };
+        alert('Failed to copy to clipboard')
+      }
+    )
+  }
 
   const handleDownloadText = () => {
-    onDownload?.(value);
-  };
+    onDownload?.(value)
+  }
 
   return (
     <div className="mb-4 relative">
@@ -61,7 +65,7 @@ export const FormInput: React.FC<FormInputProps> = ({
       )}
       {(() => {
         switch (type) {
-          case "textarea":
+          case 'textarea':
             return (
               <div className="relative">
                 <textarea
@@ -97,15 +101,15 @@ export const FormInput: React.FC<FormInputProps> = ({
                 )}
                 <div
                   className={`absolute top-2.5 right-20 bg-black/70 backdrop-blur-sm text-white text-xs rounded-3xl py-2 px-4 transition-opacity duration-300 ${
-                    showTooltip ? "opacity-100" : "opacity-0 pointer-events-none"
+                    showTooltip ? 'opacity-100' : 'opacity-0 pointer-events-none'
                   }`}
                 >
                   Copied to clipboard!
                 </div>
               </div>
-            );
-          case "text":
-          case "password":
+            )
+          case 'text':
+          case 'password':
             return (
               <input
                 type={type}
@@ -117,8 +121,8 @@ export const FormInput: React.FC<FormInputProps> = ({
                 readOnly={readOnly}
                 required
               />
-            );
-          case "file":
+            )
+          case 'file':
             return (
               <input
                 type="file"
@@ -128,10 +132,10 @@ export const FormInput: React.FC<FormInputProps> = ({
                 readOnly={readOnly}
                 required
               />
-            );
+            )
         }
       })()}
       {error && <p className="text-red-500 text-sm pt-2 px-4">{error}</p>}
     </div>
-  );
-};
+  )
+}
