@@ -288,12 +288,12 @@ export const NewDigitalSignature: React.FC<NewDigitalSignatureProps> = ({ onPrim
   } = useForm<FormData>({
     resolver: valibotResolver(validationSchema),
     defaultValues: {
-      commonName: '<@= commonName @>',
-      countryName: '<@= countryName @>',
-      stateOrProvince: '<@= stateOrProvince @>',
-      localityName: '<@= localityName @>',
-      organizationName: '<@= organizationName @>',
-      organizationalUnitName: '<@= organizationalUnitName @>',
+      commonName: '',
+      countryName: '',
+      stateOrProvince: '',
+      localityName: '',
+      organizationName: '',
+      organizationalUnitName: '',
       generationMethod: null,
       passphrase: '',
       password: '',
